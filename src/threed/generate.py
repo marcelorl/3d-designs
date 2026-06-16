@@ -34,8 +34,32 @@ def _import_model(design: Design) -> ModuleType:
     return module
 
 
+def _weld_mesh(path: Path) -> None:
+    """Re-write a 3MF with shared/merged vertices so it is a manifold mesh.
+
+    CadQuery/OCCT tessellate each face independently, so the exported mesh has
+    duplicated vertices along every face seam. trimesh merges them on load, but
+    slicers (e.g. Bambu Studio) read the raw vertices and report thousands of
+    "non-manifold edges". Reloading, welding coincident vertices and re-exporting
+    produces a clean, watertight, indexed mesh.
+    """
+    import trimesh
+
+    mesh = trimesh.load(path, force="mesh")
+    if isinstance(mesh, trimesh.Scene):
+        mesh = trimesh.util.concatenate(
+            [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+        )
+
+    mesh.merge_vertices()
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.update_faces(mesh.unique_faces())
+    mesh.remove_unreferenced_vertices()
+    mesh.export(path)
+
+
 def _export(obj: object, path: Path) -> None:
-    """Export a CadQuery object to a 3MF file at ``path``."""
+    """Export a CadQuery object to a clean, manifold 3MF file at ``path``."""
     import cadquery as cq
     from cadquery import exporters
 
@@ -45,6 +69,7 @@ def _export(obj: object, path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     exporters.export(obj, str(path), exportType=exporters.ExportTypes.THREEMF)
+    _weld_mesh(path)
 
 
 def generate_design(design: Design) -> Path:
