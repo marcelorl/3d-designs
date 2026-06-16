@@ -25,13 +25,21 @@ from OCP.TopAbs import TopAbs_IN, TopAbs_ON
 
 @dataclass
 class TabSpec:
-    """Geometry of one snap key on a seam (shared by the two mating pieces)."""
+    """Geometry of one dovetail key on a seam (shared by the two mating pieces).
 
-    embed: float = 4.0          # how far the key reaches back into its own piece
-    protrusion: float = 6.0     # how far the male key sticks into the neighbour
-    width: float = 10.0         # key width (along the seam, in-plane)
-    max_thick: float = 2.4      # key thickness cap (across the thin wall)
-    clearance: float = 0.3      # gap added to the female socket for a fit
+    A key is a vertical prism (constant cross-section in Z, rooted on the bed)
+    with a dovetail plan profile: it is narrow at the seam and flares to a wider
+    head inside the neighbour. The flared head is captured by the matching
+    socket, so a glued seam is mechanically locked against pulling apart. Because
+    the prism spans the material from the bed upward, it prints without supports;
+    pieces are assembled by lowering them together (the dovetail slides in Z).
+    """
+
+    embed: float = 5.0          # how far the key reaches back into its own piece
+    protrusion: float = 7.0     # how far the dovetail reaches into the neighbour
+    width: float = 7.0          # neck/root width (along the seam)
+    flare: float = 1.4          # head width = width * flare (the locking taper)
+    clearance: float = 0.35     # gap added to the female socket for a glued fit
 
 
 @dataclass
@@ -42,12 +50,12 @@ class SplitConfig:
     connectors: bool = True            # add snap keys at seams (False = flat,
                                        # glue-only seams that print supportless)
     tab: TabSpec = field(default_factory=TabSpec)
-    sample_along: float = 16.0         # candidate spacing along the seam
+    sample_along: float = 8.0          # candidate spacing along the seam
     scan_step: float = 0.5             # vertical scan resolution for material bands
     min_band: float = 2.0              # min material thickness to host a key
     straddle: float = 3.0              # material required each side of the seam
-    min_tab_spacing: float = 38.0      # min distance between placed keys
-    max_tabs_per_seam: int = 40
+    min_tab_spacing: float = 22.0      # min distance between placed keys
+    max_tabs_per_seam: int = 60
 
 
 def _solids(shape: cq.Shape) -> list[cq.Solid]:
@@ -137,10 +145,12 @@ def _seam_tabs(
     span_b: tuple[float, float],
     cfg: SplitConfig,
 ) -> list[tuple[float, float, float]]:
-    """Snap-key placements (a, b_center, thick) on one seam.
+    """Dovetail-key placements ``(a, b_lo, b_hi)`` on one seam.
 
-    ``axis`` is the seam normal ('x' -> in-plane (y, z); 'y' -> (x, z)). Keys are
-    placed on material bands thick enough to host them and sized to fit the band.
+    ``axis`` is the seam normal ('x' -> in-plane (y, z); 'y' -> (x, z)). Each key
+    fills a material band (``b_lo``..``b_hi`` in z) so the prism is co-extensive
+    with the wall/floor it sits in (and rooted on the bed), and is placed only
+    where the material is wide enough on both sides to host it.
     """
     a_lo, a_hi = span_a
     b_lo, b_hi = span_b
@@ -149,37 +159,63 @@ def _seam_tabs(
     a = a_lo + cfg.sample_along
     while a <= a_hi - cfg.sample_along:
         for blo, bhi in _bands(classifiers, axis, cut, a, b_lo, b_hi, cfg):
-            blen = bhi - blo
-            if blen < cfg.min_band:
+            if bhi - blo < cfg.min_band:
                 continue
             bc = (blo + bhi) / 2
-            thick = min(cfg.tab.max_thick, blen * 0.7)
             if not _width_ok(classifiers, axis, cut, a, bc, cfg):
                 continue
-            if all(abs(a - pa) > cfg.min_tab_spacing or abs(bc - pb) > max(thick, pt) * 1.5
-                   for pa, pb, pt in placed):
-                placed.append((a, bc, thick))
+            too_close = False
+            for pa, pblo, pbhi in placed:
+                pbc = (pblo + pbhi) / 2
+                if abs(a - pa) <= cfg.min_tab_spacing and abs(bc - pbc) <= max(bhi - blo, pbhi - pblo):
+                    too_close = True
+                    break
+            if not too_close:
+                placed.append((a, blo, bhi))
                 if len(placed) >= cfg.max_tabs_per_seam:
                     return placed
         a += cfg.sample_along
     return placed
 
 
-def _male(axis: str, cut: float, a: float, b: float, thick: float, tab: TabSpec) -> cq.Workplane:
-    length = tab.embed + tab.protrusion
-    center = cut - tab.embed + length / 2
+def _dovetail_prism(pts: list[tuple[float, float]], blo: float, bhi: float) -> cq.Workplane:
+    """A vertical prism: the in-plane polygon ``pts`` extruded in z over the band."""
+    return (
+        cq.Workplane("XY")
+        .polyline(pts)
+        .close()
+        .extrude(bhi - blo)
+        .translate((0.0, 0.0, blo))
+    )
+
+
+def _male(axis: str, cut: float, a: float, blo: float, bhi: float, tab: TabSpec) -> cq.Workplane:
+    """Dovetail tenon: anchored in this piece, flaring into the neighbour."""
+    e, pr = tab.embed, tab.protrusion
+    rw = tab.width / 2.0
+    hw = tab.width * tab.flare / 2.0
     if axis == "x":
-        return _box(length, tab.width, thick, (center, a, b))
-    return _box(tab.width, length, thick, (a, center, b))
+        pts = [(cut - e, a - rw), (cut - e, a + rw),
+               (cut + pr, a + hw), (cut + pr, a - hw)]
+    else:
+        pts = [(a - rw, cut - e), (a + rw, cut - e),
+               (a + hw, cut + pr), (a - hw, cut + pr)]
+    return _dovetail_prism(pts, blo, bhi)
 
 
-def _socket(axis: str, cut: float, a: float, b: float, thick: float, tab: TabSpec) -> cq.Workplane:
+def _socket(axis: str, cut: float, a: float, blo: float, bhi: float, tab: TabSpec) -> cq.Workplane:
+    """The dovetail mortise: the tenon shape grown by ``clearance`` for a fit."""
     cl = tab.clearance
-    length = tab.protrusion + 2 * cl
-    center = cut - cl + length / 2
+    e, pr = tab.embed, tab.protrusion + cl
+    rw = tab.width / 2.0 + cl
+    hw = tab.width * tab.flare / 2.0 + cl
     if axis == "x":
-        return _box(length, tab.width + 2 * cl, thick + 2 * cl, (center, a, b))
-    return _box(tab.width + 2 * cl, length, thick + 2 * cl, (a, center, b))
+        pts = [(cut - e, a - rw), (cut - e, a + rw),
+               (cut + pr, a + hw), (cut + pr, a - hw)]
+    else:
+        pts = [(a - rw, cut - e), (a + rw, cut - e),
+               (a + hw, cut + pr), (a - hw, cut + pr)]
+    return _dovetail_prism(pts, blo - cl, bhi + cl)
 
 
 def split_for_print(model: cq.Workplane, cfg: SplitConfig | None = None) -> list[cq.Workplane]:
@@ -230,24 +266,24 @@ def split_for_print(model: cq.Workplane, cfg: SplitConfig | None = None) -> list
                 if piece.val().isNull() or piece.val().Volume() < 1.0:
                     continue
 
-                # Male keys on the +X / +Y faces (internal seams only).
+                # Male dovetails on the +X / +Y faces (internal seams only).
                 if xb in x_tabs:
-                    for (a, b, t) in x_tabs[xb]:
-                        if ya < a < yb and za < b < zb:
-                            piece = piece.union(_male("x", xb, a, b, t, cfg.tab))
+                    for (a, blo, bhi) in x_tabs[xb]:
+                        if ya < a < yb:
+                            piece = piece.union(_male("x", xb, a, blo, bhi, cfg.tab))
                 if yb in y_tabs:
-                    for (a, b, t) in y_tabs[yb]:
-                        if xa < a < xb and za < b < zb:
-                            piece = piece.union(_male("y", yb, a, b, t, cfg.tab))
-                # Female sockets on the -X / -Y faces.
+                    for (a, blo, bhi) in y_tabs[yb]:
+                        if xa < a < xb:
+                            piece = piece.union(_male("y", yb, a, blo, bhi, cfg.tab))
+                # Female mortises on the -X / -Y faces.
                 if xa in x_tabs:
-                    for (a, b, t) in x_tabs[xa]:
-                        if ya < a < yb and za < b < zb:
-                            piece = piece.cut(_socket("x", xa, a, b, t, cfg.tab))
+                    for (a, blo, bhi) in x_tabs[xa]:
+                        if ya < a < yb:
+                            piece = piece.cut(_socket("x", xa, a, blo, bhi, cfg.tab))
                 if ya in y_tabs:
-                    for (a, b, t) in y_tabs[ya]:
-                        if xa < a < xb and za < b < zb:
-                            piece = piece.cut(_socket("y", ya, a, b, t, cfg.tab))
+                    for (a, blo, bhi) in y_tabs[ya]:
+                        if xa < a < xb:
+                            piece = piece.cut(_socket("y", ya, a, blo, bhi, cfg.tab))
 
                 pieces.append(piece)
 
