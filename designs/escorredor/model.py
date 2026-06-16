@@ -4,19 +4,20 @@ The reference is a compact drainer (61 x 17 x 20 cm): a slotted drain tray with
 rounded corners, a row of thin plate-support fins, and a two-compartment cutlery
 box at one end.
 
-Because the 60 x 50 cm tray is printed in pieces and glued together, the body
-itself carries no feet -- only shallow glue sockets on its underside (one under
-every printed piece plus the corners). The feet are printed separately (see the
-``pe`` design) and glued into those sockets, so the assembled piece is supported
-across its whole footprint and can hold heavy items (pots, cups, ...).
+Because the tray is printed in pieces and glued together, the body itself
+carries no feet -- only shallow glue sockets on its underside (one under every
+printed piece plus the corners). The feet are printed and glued into those
+sockets, so the assembled piece is supported across its whole footprint and can
+hold heavy items (pots, cups, ...). The feet ride along on the A1 export as
+their own selectable parts.
 
 This model keeps those components at their original size/style but places them
-in a larger 60 x 50 cm tray:
+in a larger tray with a 50 cm (X) x 60 cm (Y) footprint:
 
-    - The "rack" (cutlery box + plate fins) sits in a ~17 cm deep strip along the
-      back of the 60 cm edge. The cutlery box is at one end and the plate fins
-      (same size/spacing as the reference) fill the rest of the 60 cm length.
-    - The remaining ~33 cm depth is free, open, slotted drain space for anything.
+    - The "rack" (cutlery box + plate fins) sits in a ~17 cm deep strip along one
+      edge. The cutlery box is at one end and the plate fins (same size/spacing
+      as the reference) fill the rest of that edge.
+    - The remaining depth is free, open, slotted drain space for anything.
 
 Reusable primitives come from ``threed.geometry``. Tweak ``PARAMS`` to adjust.
 """
@@ -41,9 +42,9 @@ from threed.geometry import (
 FOOT = FootSpec()
 
 PARAMS: dict[str, float] = {
-    # Overall tray (mm). Width = X = 60 cm (length), Depth = Y = 50 cm.
-    "width": 600.0,
-    "depth": 500.0,
+    # Overall tray (mm). Width = X = 50 cm, Depth = Y = 60 cm.
+    "width": 500.0,
+    "depth": 600.0,
     "tray_height": 30.0,
     "wall": 3.0,
     "corner_fillet": 24.0,
