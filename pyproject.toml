@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "threed"
+version = "0.1.0"
+description = "Local generator and viewer for parametric 3MF designs."
+authors = ["3d"]
+readme = "README.md"
+packages = [{ include = "threed", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "~3.12"
+cadquery = ">=2.5"
+streamlit = ">=1.40"
+pyvista = ">=0.44"
+panel = ">=1.4"
+trimesh = ">=4.0"
+networkx = ">=3.0"
+lxml = ">=5.0"
+pillow = ">=10.0"
+
+[tool.poetry.scripts]
+generate = "threed.generate:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

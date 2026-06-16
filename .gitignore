@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Poetry
+# (keep poetry.lock committed)
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
