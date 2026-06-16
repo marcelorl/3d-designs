@@ -34,6 +34,47 @@ def _import_model(design: Design) -> ModuleType:
     return module
 
 
+def _cq_to_trimesh(obj: object):
+    """Tessellate a CadQuery object into a clean, welded ``trimesh.Trimesh``."""
+    import tempfile
+
+    import cadquery as cq
+    import trimesh
+    from cadquery import exporters
+
+    if isinstance(obj, cq.Assembly):
+        obj = obj.toCompound()
+
+    with tempfile.NamedTemporaryFile(suffix=".3mf", delete=False) as handle:
+        tmp = Path(handle.name)
+    try:
+        exporters.export(obj, str(tmp), exportType=exporters.ExportTypes.THREEMF)
+        mesh = trimesh.load(tmp, force="mesh")
+        if isinstance(mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate(
+                [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+            )
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    mesh.merge_vertices()
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.update_faces(mesh.unique_faces())
+    mesh.remove_unreferenced_vertices()
+    return mesh
+
+
+def _export_pieces(pieces: list, path: Path) -> None:
+    """Export many CadQuery pieces as separate objects inside one 3MF file."""
+    import trimesh
+
+    scene = trimesh.Scene()
+    for index, piece in enumerate(pieces):
+        scene.add_geometry(_cq_to_trimesh(piece), geom_name=f"part_{index:02d}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scene.export(path)
+
+
 def _weld_mesh(path: Path) -> None:
     """Re-write a 3MF with shared/merged vertices so it is a manifold mesh.
 
@@ -73,7 +114,16 @@ def _export(obj: object, path: Path) -> None:
 
 
 def generate_design(design: Design) -> Path:
-    """Build a single design and return the path of the generated 3MF file."""
+    """Build a single design and export both formats.
+
+    Always writes two files:
+
+    * ``<design>.3mf``     -- the complete design as one piece.
+    * ``<design>_a1.3mf``  -- the design sliced into pieces that fit a Bambu Lab
+      A1 plate, with integrated snap connectors, all pieces in one file.
+
+    Returns the path of the full (complete) 3MF file.
+    """
     module = _import_model(design)
     build = getattr(module, "build", None)
     if not callable(build):
@@ -81,9 +131,30 @@ def generate_design(design: Design) -> Path:
             f"Design {design.name!r} model.py must define a callable build()"
         )
     result = build()
+
     output_path = design.output_dir / f"{design.name}.3mf"
     _export(result, output_path)
+
+    _export_a1(module, result, design)
     return output_path
+
+
+def _export_a1(module: ModuleType, result: object, design: Design) -> None:
+    """Export the Bambu Lab A1 (sliced + connectors) variant of a design."""
+    from .split import SplitConfig, split_for_print
+
+    # A design may customise slicing by defining ``split_a1(result) -> pieces``.
+    custom = getattr(module, "split_a1", None)
+    if callable(custom):
+        pieces = custom(result)
+    else:
+        pieces = split_for_print(result, SplitConfig())
+
+    if not pieces:
+        return
+    a1_path = design.output_dir / f"{design.name}_a1.3mf"
+    _export_pieces(pieces, a1_path)
+    print(f"  -> {a1_path} ({len(pieces)} pieces)")
 
 
 def generate_all(names: list[str] | None = None) -> list[Path]:
